@@ -1,0 +1,42 @@
+#!/bin/bash
+# Script que actua de proxy para el check_disk que viene "out of the box" de
+#   nagios plugins.
+# Su funcion es agregar '@ used=X%' donde X es entre 0 y 100, a la salida del
+#  plugin original
+
+
+# euro:/etc/nagiosgrapher/ngraph.d/extra# /usr/lib/nagios/plugins/check_disk -w 20 -c 10 -p /
+# DISK OK - free space: / 21970 MB (70% inode=77%);| /=9213MB;32832;32842;0;32852
+#
+# DISK OK - free space: / 23819 MB (76% inode=82%); /lib/init/rw 250 MB (100% inode=99%); /dev 246 MB (99% inode=99%); /dev/shm 250 MB (100% inode=99%);| /=7365MB;32842;32847;0;32852 /lib/init/rw=0MB;240;245;0;250 /dev=0MB;236;241;0;246 /dev/shm=0MB;240;245;0;250
+
+plugins_path="/usr/lib/nagios/plugins"
+
+check_plugin="$plugins_path/check_disk"
+
+[ ! -x "$check_plugin" ] && { 
+  echo DISK UNKNOWN: $check_plugin not found
+  exit 3
+}
+
+plugin_output=$(mktemp)
+$plugins_path/check_disk $@ > $plugin_output
+
+if [ "$(cat $plugin_output | wc -l)" -gt 1 ] ; then
+  cat $plugin_output
+  rm -rf $plugin_output
+  exit 0
+fi
+cat $plugin_output | cut -f 1 -d \| > $plugin_output.state
+cat $plugin_output | cut -f 2 -d \| > $plugin_output.perfdata
+
+cat $plugin_output.state | tr ';' '\n' | { 
+  while read line ; do
+    perc=$(echo $line | sed -e 's/^[^(]\+(\([0-9]\+\)%.*$/\1/')
+    [ ! "x${perc}" == "x"  ] && { 
+      echo $line | sed -e "s/(\([0-9]\+\)\(%[^)]\+\))/(\1\2 @ used=$((100-$perc))%)/"
+    }
+  done
+} | tr '\n' ';' ; echo -n '|' ; cat $plugin_output.perfdata
+
+rm -f $plugin_output.* $plugin_output

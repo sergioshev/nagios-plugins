@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+# return values
+# UNKNOWN = 3
+# CRITICAL = 2
+# WARNING = 1
+# OK = 0
+
+use strict;
+use Getopt::Std;
+
+#Dec 18 07:49:19 euro sshd[12389]: Failed password for root from 117.21.173.29 port 1630 ssh2
+#my $re = '.*Failed password for\s+(\S+)\s+from\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+.*$';
+
+#pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=182.100.67.102  user=root
+my $re = 'pam_unix\(sshd:auth\):\s+authentication\s+failure;\s+logname=.*uid=.*tty=ssh.*rhost=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(user=(\S+))?.*$';
+my $additional_info_ip_count = 7;
+my $additional_info_ip_text = '';
+
+
+
+my %opts;
+getopts('w:c:f:', \%opts);
+if (scalar(keys(%opts)) != 3) {
+  print "Usage: -f path_to_auth_log -c critical_hits_for_some_ip -w warn_hist_for_some_ip\n";
+  exit 3;
+}
+
+my $ssh_log=$opts{f};
+my $crit=$opts{c};
+my $warn=$opts{w};
+
+if (!open(FH , '<', $ssh_log)) {
+ print "Can't open $ssh_log : $!\n";
+ exit(3);
+}
+
+my $hits={};
+
+my @lines;
+@lines = <FH>;
+
+foreach my $line (@lines) {
+  if ($line =~ /$re/) {
+    my $user = $3;
+    my $ip = $1;
+    $user = 'unknown' if (!defined($user));
+    $hits->{$ip}->{count} = 0 if (!defined($hits->{$ip}->{count}));
+    $hits->{$ip}->{$user}->{count} = 0 if (!defined($hits->{$ip}->{$user}));
+    $hits->{$ip}->{count}++;
+    $hits->{$ip}->{$user}->{count}++;
+  }
+}
+
+my $max_hit = 0;
+my $max_hit_ip = '0.0.0.0';
+
+foreach my $key (keys(%$hits)) {
+  if ($hits->{$key}->{count} > $max_hit) {
+    $max_hit=$hits->{$key}->{count};
+    $max_hit_ip=$key;
+  }
+}
+
+foreach my $key ( sort { $hits->{$b}->{count} <=> $hits->{$a}->{count} } keys(%$hits)) {
+  if ($max_hit eq 0) {
+    $max_hit = $hits->{$key}->{count};
+    $max_hit_ip = $key;
+  }
+  $additional_info_ip_text .= "$key=$hits->{$key}->{count}; ";
+  last if (! --$additional_info_ip_count);
+}
+
+
+if ($max_hit >= $crit) {
+  print "CRITICAL: $additional_info_ip_text\n";
+  exit(2);
+}
+
+
+if ($max_hit<$crit and $max_hit >= $warn) {
+  print "WARNING: $additional_info_ip_text\n";
+  exit(1);
+}
+
+print "OK: $additional_info_ip_text\n";
+exit(0);

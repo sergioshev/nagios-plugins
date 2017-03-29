@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# Este script ejecuta el utilitario de control de RAID sobre el dispositivo
+# /dev/cciss/c0d0.
+#
+
+EXE=/usr/bin/cciss_vol_status
+DEV=/dev/cciss/c0d0
+
+# Este comando lo ejecutará el usuario nagios a nombre de root.
+# Para esto debe existir la regla:
+#
+# nagios          ALL=(root) NOPASSWD: /usr/bin/cciss_vol_status
+#
+# en sudoers.
+state="$( sudo $EXE $DEV 2>&1 | \
+  sed -ne 's/^.*status\:[[:space:]]\+\([^\.]\+\)\.[[:space:]]\+.*$/\1/p' )"
+
+if [ "$state" == "OK" ] ; then
+  echo "RAID state: active/clean"
+  exit 0
+fi
+
+echo "RAID state: $state"
+exit 2

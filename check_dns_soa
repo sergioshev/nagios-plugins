@@ -1,0 +1,95 @@
+#!/bin/bash
+# scritp para obtener la temperatura interna de la ups del rack
+
+dns_master=apolo
+dns_slave=ns2.afraid.org
+dns_master_keyfile="/etc/bind/Ktq-externa.+157+15674.key"
+
+function usage()
+{
+cat <<END
+  Usage: $0 -w NUM -c NUM [ -h ]
+    -w: integer (diferencia entre los soa)
+    -c: integer (diferencia entre los soa)
+    -h: print this help
+END
+}
+
+
+function is_num()
+{
+  printf %d $1 &>/dev/null
+  return $?
+}
+
+function smaller()
+{
+  op1="$1"
+  op2="$2"
+  res=$(echo "$op1 <= $op2" | bc)
+  [ "$res" == "1" ] && return 0
+  return 1
+}
+
+OPS=$(getopt w:c:h:: "$@")
+
+eval set -- "$OPS"
+
+while true ; do
+  case "$1" in
+    -w) WARN=$2 ; shift 2 ;;
+    -c) CRITIC=$2 ; shift 2 ;;
+    -h) usage ; exit 0 ;;
+    --) shift ; break ;;
+  esac
+done
+
+# return values
+# UNKNOWN = 3
+# CRITICAL = 2
+# WARNING = 1
+# OK = 0
+
+if [ "${WARN}x" == "x" -o  "${CRITIC}x" == "x" ] ; then
+  echo "SOA CHECK UNKNOWN: Invalid -w nor -c arguments"
+  exit 3
+fi
+
+if ! is_num "$WARN" || ! is_num "$CRITIC" ; then
+  echo "SOA CHECK UNKNOWN: Invalid -w nor -c arguments"
+  exit 3
+fi
+
+smaller "$CRITIC"  "$WARN" && {
+  echo "SOA CHECK UNKNOWN: -c value smaller than -w"
+  exit 3
+}
+
+soa_master=$(dig @$dns_master terminalquequen.com.ar IN SOA -k "$dns_master_keyfile" +short | sed -e 's/\s\+/ /' | cut -f 3 -d ' ')
+
+for (( i=0 ; $i<3 ; i=$i+1 )) ; do
+  soa_slave=$(dig @$dns_slave terminalquequen.com.ar IN SOA +short | sed -e 's/\s\+/ /' | cut -f 3 -d ' ')
+  is_num "$soa_slave" && break
+  sleep 3
+done
+
+if ! is_num "$soa_master" || ! is_num "$soa_slave" ; then 
+  echo "SOA CHECK UNKNOWN: SOA error, soa_master=$soa_master soa_slave=$soa_slave"
+  exit 3
+fi
+
+soa_diff=$(($soa_master-$soa_slave))
+
+smaller "$CRITIC" "$soa_diff"  && {
+  echo "SOA CHECK CRITICAL: soa_master=$soa_master soa_slave=$soa_slave"
+  exit 2
+}
+
+smaller "$WARN" "$soa_diff" && {
+  echo "SOA CHECK WARNING: soa_master=$soa_master soa_slave=$soa_slave"
+  exit 1
+}
+
+echo "SOA CHECK OK: soa=$soa_slave"
+exit 0
+

@@ -1,0 +1,81 @@
+#!/bin/bash
+# Script para controlar el tamaño de la base de datos de Bacula.
+
+function usage()
+{
+cat <<END
+  Usage: $0 -w NUM -c NUM [ -h ]
+    -w: warning database size
+    -c: critical database size
+    -h: print this help
+END
+}
+
+function is_num()
+{
+  printf %d $1 &>/dev/null
+  return $?
+}
+
+function smaller()
+{
+  op1="$1"
+  op2="$2"
+  res=$(echo "$op1 < $op2" | bc)
+  [ "$res" == "1" ] && return 0
+  return 1
+}
+
+OPS=$(getopt w:c:h:: "$@")
+
+eval set -- "$OPS"
+
+while true ; do
+  case "$1" in
+    -w) WARN=$2 ; shift 2 ;;
+    -c) CRITIC=$2 ; shift 2 ;;
+    -h) usage ; exit 0 ;;
+    --) shift ; break ;;
+  esac
+done
+
+# return values
+# UNKNOWN = 3
+# CRITICAL = 2
+# WARNING = 1
+# OK = 0
+
+if [ "${WARN}x" == "x" -o  "${CRITIC}x" == "x" ] ; then
+  echo "BACULADB UNKNOWN: Invalid -w nor -c arguments"
+  exit 3
+fi
+
+if ! is_num "$WARN" || ! is_num "$CRITIC" ; then
+  echo "BACULADB UNKNOWN: Invalid -w nor -c arguments"
+  exit 3
+fi
+
+smaller "$CRITIC"  "$WARN" && {
+  echo "BACULADB UNKNOWN: -c value smaller than -w"
+  exit 3
+}
+
+db_size=$( echo "SELECT pg_database_size('bacula')/1000000;" | psql -A -U bacula bacula | tail -n 2 | head -n 1 )
+
+if [ $? -gt 0 ] || [ "x$db_size" == "x" ] ; then 
+  echo "BACULADB UNKNOWN: error getting database size"
+  exit 3
+fi
+
+smaller "$CRITIC" "$db_size"  && {
+  echo "BACULADB CRITICAL: Size=$db_size | db_size=$db_size;$WARN;$CRITIC"
+  exit 2
+}
+
+smaller "$WARN" "$db_size" && {
+  echo "BACULADB WARNING: Size=$db_size | db_size=$db_size;$WARN;$CRITIC"
+  exit 1
+}
+
+echo "BACULADB OK: Size=$db_size | db_size=$db_size;$WARN;$CRITIC"
+exit 0
